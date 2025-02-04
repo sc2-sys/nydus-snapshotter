@@ -271,8 +271,18 @@ func (t *Manager) generateBootstrap(tarReader io.Reader, snapshotID, layerBlobID
 	log.L.Debugf("nydus image output %s", outb.String())
 	log.L.Debugf("nydus image err %s", errb.String())
 
-	if err := os.Rename(layerTarFileTmp, layerTarFile); err != nil {
-		return errors.Wrapf(err, "rename file %s to %s", layerTarFileTmp, layerTarFile)
+	// SC2: this rename can sometimes fail if two layers have the same digest.
+	// This is because two threads will try to prepare the same layer
+	// synchronously. During the creation, they will both create a tmp file,
+	// and then rename it to a tar file. However, we still need to create
+	// the corresponding bootstrap for the snapshot. As a consequence, before
+	// renaming we just check if the destination file already exists.
+	if _, err := os.Stat(layerTarFile); err == nil {
+		log.L.Warn("skipping renaming a tar layer. likely two layers with same digest")
+	} else {
+		if err := os.Rename(layerTarFileTmp, layerTarFile); err != nil {
+			return errors.Wrapf(err, "rename file %s to %s", layerTarFileTmp, layerTarFile)
+		}
 	}
 	if err := os.Rename(layerMetaFileTmp, layerMetaFile); err != nil {
 		return errors.Wrapf(err, "rename file %s to %s", layerMetaFileTmp, layerMetaFile)
