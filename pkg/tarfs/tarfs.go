@@ -526,9 +526,20 @@ func (t *Manager) ExportBlockData(s storage.Snapshot, perLayer bool, labels map[
 	}
 
 	// Do not regenerate if the disk image already exists.
+	// SC2: WARNING: this breaks in layer_block mode when two layers have the same
+	// digest, because we skip re-generating the disk image for the layer
+	// (which is correct) but we do not add the corresponding annotations to
+	// the snapshot label. This means that we will not export the right Kata
+	// virtual volume
 	if _, err := os.Stat(diskFileName); err == nil {
-		return updateFields, nil
+		// SC2: given that we cannot easily cache the labels for previous
+		// layers, we just need to re-generate the disk image for the
+		// duplicated layer (necessary to get the dm-verity data, too)
+		if wholeImage {
+			return updateFields, nil
+		}
 	}
+
 	diskFileNameTmp := diskFileName + ".tarfs.tmp"
 	defer os.Remove(diskFileNameTmp)
 
@@ -572,9 +583,13 @@ func (t *Manager) ExportBlockData(s storage.Snapshot, perLayer bool, labels map[
 	}
 	log.L.Debugf("export block labels %v", labels)
 
-	err = os.Rename(diskFileNameTmp, diskFileName)
-	if err != nil {
-		return updateFields, errors.Wrap(err, "rename disk image file")
+	if _, err := os.Stat(diskFileName); err == nil {
+		log.L.Warn("skip rename layer disk image. likely two layers with same digest")
+	} else {
+		err = os.Rename(diskFileNameTmp, diskFileName)
+		if err != nil {
+			return updateFields, errors.Wrap(err, "rename disk image file")
+		}
 	}
 
 	return updateFields, nil
